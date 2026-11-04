@@ -1,0 +1,1 @@
+{"specVersion":"1.0","host":{"displayName":"SplitMate"},"entries":[{"identifier":"urn:air:splitmate:api:health","displayName":"SplitMate Health API","type":"application/json","url":"http://localhost:3000/api/health","description":"API status and AI capability discovery for SplitMate"}]}

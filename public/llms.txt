@@ -1,0 +1,7 @@
+# SplitMate
+
+> Smart group expense tracker and debt simplification engine.
+
+## Links
+- [SplitMate Application](http://localhost:3000/): Main application
+- [API Health](http://localhost:3000/api/health): System status

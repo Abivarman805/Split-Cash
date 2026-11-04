@@ -1,0 +1,6 @@
+{
+  "name": "SplitMate",
+  "description": "Smart group expense tracker and debt simplification engine with AI-powered receipt scanning and expense parsing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
