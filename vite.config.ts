@@ -11,6 +11,11 @@ export default defineConfig(() => {
         '@': fileURLToPath(new URL('.', import.meta.url)),
       },
     },
+    build: {
+      cssMinify: 'esbuild',
+      minify: 'esbuild',
+      chunkSizeWarningLimit: 2000,
+    },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
