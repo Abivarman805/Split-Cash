@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 interface LoginPage3DProps {
-  availableUsers: User[];
+  availableUsers?: User[];
   onLoginSuccess: (user: User) => void;
 }
 
@@ -30,7 +30,7 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
   const sceneRef = useRef<VaultScene | null>(null);
 
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
-  const [username, setUsername] = useState('');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -38,7 +38,6 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 3D Tilt
   const [tiltX, setTiltX] = useState(2);
   const [tiltY, setTiltY] = useState(-3);
   const [glarePos, setGlarePos] = useState({ x: 50, y: 50, opacity: 0 });
@@ -96,7 +95,12 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
     }
   };
 
-  // 1. SUPABASE AUTH: Sign In with permanent credentials
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value);
+    sceneRef.current?.spinDial(0.45);
+  };
+
+  // Sign In via Supabase Auth
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -117,10 +121,14 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
         password,
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          throw new Error('Incorrect email or password.');
+        }
+        throw error;
+      }
 
       if (data.user) {
-        // Retrieve display profile
         const { data: profile } = await supabase
           .from('profiles')
           .select('*')
@@ -129,7 +137,7 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
 
         const userObj: User = {
           id: data.user.id,
-          name: profile?.username || data.user.user_metadata?.username || cleanEmail.split('@')[0],
+          name: profile?.username || data.user.user_metadata?.name || cleanEmail.split('@')[0],
           email: cleanEmail,
           avatar: profile?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(data.user.id)}`,
           color: profile?.color || '#059669',
@@ -138,23 +146,23 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
         triggerUnlockAndLogin(userObj);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Invalid login credentials. Please try again.');
+      setErrorMsg(err.message || 'Sign in failed. Please check your credentials.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // 2. SUPABASE AUTH: Create new permanent account in auth.users
+  // Sign Up via Supabase Auth (Creates user in Authentication -> Users)
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    const cleanUsername = username.trim();
+    const cleanName = name.trim();
     const cleanEmail = email.trim().toLowerCase();
 
-    if (!cleanUsername) {
-      setErrorMsg('Please enter your username.');
+    if (!cleanName) {
+      setErrorMsg('Please enter your name.');
       return;
     }
     if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -162,7 +170,7 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
       return;
     }
     if (password.length < 6) {
-      setErrorMsg('Password must be at least 6 characters long.');
+      setErrorMsg('Password must be at least 6 characters.');
       return;
     }
 
@@ -175,26 +183,41 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
         password,
         options: {
           data: {
-            username: cleanUsername,
+            name: cleanName,
+            username: cleanName,
           },
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.message.toLowerCase().includes('already registered')) {
+          throw new Error('An account with this email already exists. Please sign in instead.');
+        }
+        throw error;
+      }
 
       if (data.user) {
-        const userObj: User = {
-          id: data.user.id,
-          name: cleanUsername,
-          email: cleanEmail,
-          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanUsername)}`,
-          color: '#059669',
-        };
+        // Check if Supabase complains about duplicate obfuscated user (identities length === 0)
+        if (data.user.identities && data.user.identities.length === 0) {
+          throw new Error('An account with this email already exists. Please sign in instead.');
+        }
 
-        triggerUnlockAndLogin(userObj);
+        if (data.session) {
+          const userObj: User = {
+            id: data.user.id,
+            name: cleanName,
+            email: cleanEmail,
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(data.user.id)}`,
+            color: '#059669',
+          };
+          triggerUnlockAndLogin(userObj);
+        } else {
+          setSuccessMsg('Account created! Please sign in (or confirm your email if confirmation is enabled).');
+          setAuthMode('signin');
+        }
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to create account.');
+      setErrorMsg(err.message || 'Failed to register account.');
     } finally {
       setIsSubmitting(false);
     }
@@ -209,7 +232,7 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
     >
       <div ref={canvasMountRef} className="absolute inset-0 w-full h-full z-0 cursor-grab active:cursor-grabbing" />
 
-      {/* Brand Header */}
+      {/* Top Brand Badge */}
       <div className="absolute top-4 left-4 sm:left-6 z-20 flex items-center gap-3">
         <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-slate-900/90 border border-emerald-500/30 text-white shadow-xl backdrop-blur-md">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center font-extrabold text-sm shadow-md shadow-emerald-600/30">
@@ -219,12 +242,12 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
             <div className="text-xs font-black tracking-tight flex items-center gap-1.5">
               <span>Split<span className="text-emerald-400">Mate</span></span>
             </div>
-            <div className="text-[10px] text-slate-400">Powered by Supabase Auth</div>
+            <div className="text-[10px] text-slate-400">Easy Group Expenses</div>
           </div>
         </div>
       </div>
 
-      {/* Login Card */}
+      {/* Floating Login Card */}
       <div 
         className="absolute right-4 sm:right-8 top-1/2 -translate-y-1/2 z-20 w-full max-w-[420px] max-h-[92vh] overflow-y-auto no-scrollbar pointer-events-auto"
         style={{ perspective: '1400px' }}
@@ -255,21 +278,20 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
                 {authMode === 'signin' ? (
                   <>
                     <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                    <span>Supabase Auth Login</span>
+                    <span>Welcome to SplitMate</span>
                   </>
                 ) : (
                   <>
                     <UserPlus className="w-5 h-5 text-emerald-400" />
-                    <span>Create Your Account</span>
+                    <span>Create Account</span>
                   </>
                 )}
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Permanent user IDs • Isolated private expenses
+                Secured with Supabase Auth
               </p>
             </div>
 
-            {/* Mode Switcher */}
             <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950/90 rounded-xl my-4 text-xs font-bold text-center border border-slate-800">
               <button
                 type="button"
@@ -300,13 +322,13 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
             </div>
 
             {errorMsg && (
-              <div className="mb-3 p-2.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+              <div className="mb-3 p-2.5 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>{errorMsg}</span>
               </div>
             )}
             {successMsg && (
-              <div className="mb-3 p-2.5 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+              <div className="mb-3 p-2.5 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs font-semibold flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 flex-shrink-0" />
                 <span>{successMsg}</span>
               </div>
@@ -315,13 +337,13 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
             {authMode === 'signin' ? (
               <form onSubmit={handleSignIn} className="space-y-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-300 block mb-1">Email address</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Email</label>
                   <div className="relative">
                     <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-emerald-400" />
                     <input
                       type="email"
                       required
-                      placeholder="your.email@gmail.com"
+                      placeholder="you@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full pl-9 pr-3.5 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-950/90 border border-slate-800 focus:border-emerald-400 focus:outline-none text-white font-medium"
@@ -338,13 +360,14 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
                       required
                       placeholder="••••••••"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={handlePasswordChange}
                       className="w-full pl-9 pr-10 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-950/90 border border-slate-800 focus:border-emerald-400 focus:outline-none text-white font-medium"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -359,12 +382,12 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
                   {isSubmitting ? (
                     <>
                       <RotateCw className="w-4 h-4 animate-spin" />
-                      <span>Authenticating...</span>
+                      <span>Signing In...</span>
                     </>
                   ) : (
                     <>
                       <Lock className="w-4 h-4" />
-                      <span>Sign In & Restore Expenses</span>
+                      <span>Sign In</span>
                     </>
                   )}
                 </button>
@@ -372,28 +395,28 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
             ) : (
               <form onSubmit={handleRegister} className="space-y-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-300 block mb-1">Your Name / Username</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Your Name</label>
                   <div className="relative">
                     <UserIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-emerald-400" />
                     <input
                       type="text"
                       required
-                      placeholder="alex_rivera"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="Your Full Name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
                       className="w-full pl-9 pr-3.5 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-950/90 border border-slate-800 focus:border-emerald-400 focus:outline-none text-white font-medium"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold text-slate-300 block mb-1">Email address</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Email</label>
                   <div className="relative">
                     <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-emerald-400" />
                     <input
                       type="email"
                       required
-                      placeholder="your.email@gmail.com"
+                      placeholder="you@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full pl-9 pr-3.5 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-950/90 border border-slate-800 focus:border-emerald-400 focus:outline-none text-white font-medium"
@@ -410,13 +433,14 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
                       required
                       placeholder="At least 6 characters"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={handlePasswordChange}
                       className="w-full pl-9 pr-10 py-2.5 text-xs sm:text-sm rounded-xl bg-slate-950/90 border border-slate-800 focus:border-emerald-400 focus:outline-none text-white font-medium"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -435,7 +459,7 @@ export const LoginPage3D: React.FC<LoginPage3DProps> = ({
                     </>
                   ) : (
                     <>
-                      <span>Register & Create Vault</span>
+                      <span>Create Account & Enter</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}

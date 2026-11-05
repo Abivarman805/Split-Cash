@@ -42,9 +42,6 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-// ============================================================================
-// INLINE PWA INSTALL BANNER COMPONENT
-// ============================================================================
 function PwaInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -157,13 +154,11 @@ function PwaInstallBanner() {
   );
 }
 
-// ============================================================================
-// MAIN APP COMPONENT
-// ============================================================================
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
+  // Clean state: ZERO dummy data
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string>('');
   const [users, setUsers] = useState<User[]>([]);
@@ -204,18 +199,19 @@ export default function App() {
     id: row.id,
     groupId: row.group_id || 'grp_personal',
     userId: row.user_id,
-    title: row.description || row.title,
+    title: row.title || row.description || 'Expense',
     category: row.category || 'Food',
     amount: Number(row.amount),
     paidById: row.user_id,
     splitType: row.split_type || 'equal',
     splits: typeof row.splits === 'string' ? JSON.parse(row.splits) : (row.splits || []),
-    date: row.expense_date || row.date || new Date().toISOString().split('T')[0],
+    date: row.date || row.expense_date || new Date().toISOString().split('T')[0],
     notes: row.notes || undefined,
     createdAt: row.created_at,
   });
 
-  const loadUserData = useCallback(async (userId: string, email: string) => {
+  // Load authenticated user's profile, groups, and expenses from Supabase
+  const loadUserData = useCallback(async (userId: string, email: string, metadataName?: string) => {
     setIsLoadingExpenses(true);
     setExpenseFetchError(null);
 
@@ -228,77 +224,33 @@ export default function App() {
 
       const userObj: User = {
         id: userId,
-        name: profile?.username || email.split('@')[0],
+        name: profile?.username || metadataName || email.split('@')[0],
         email: email,
         avatar: profile?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(userId)}`,
         color: profile?.color || '#059669',
       };
       setCurrentUser(userObj);
 
-      let { data: dbGroups } = await supabase.from('groups').select('*');
+      const personalGroupId = 'grp_' + userId.slice(0, 8);
+      const personalGroup: Group = {
+        id: personalGroupId,
+        name: 'My Expenses',
+        description: 'Personal & Shared expenses',
+        currency: 'INR',
+        symbol: '₹',
+        createdAt: new Date().toISOString().split('T')[0],
+        members: [userObj],
+      };
 
-      if (!dbGroups || dbGroups.length === 0) {
-        const defaultGroupId = 'grp_' + userId.slice(0, 8);
-        const defaultGroup = {
-          id: defaultGroupId,
-          name: 'My Expenses 🏖️',
-          description: 'Personal & Shared group expenses',
-          currency: 'INR',
-          symbol: '₹',
-          created_by: userId,
-        };
+      setGroups([personalGroup]);
+      setActiveGroupId(personalGroupId);
+      setUsers([userObj]);
 
-        await supabase.from('groups').insert(defaultGroup);
-        await supabase.from('group_members').insert({
-          group_id: defaultGroupId,
-          user_id: userId,
-        });
-
-        dbGroups = [defaultGroup as any];
-      }
-
-      const { data: dbMembers } = await supabase.from('group_members').select('*');
-      const { data: allProfiles } = await supabase.from('profiles').select('*');
-      const profileMap = new Map((allProfiles || []).map(p => [p.id, p]));
-
-      const loadedGroups: Group[] = (dbGroups || []).map(g => {
-        const memberIds = (dbMembers || [])
-          .filter(m => m.group_id === g.id)
-          .map(m => m.user_id);
-
-        let members: User[] = memberIds.map(id => {
-          const p = profileMap.get(id);
-          return {
-            id,
-            name: p?.username || (id === userId ? userObj.name : 'Friend'),
-            email: p?.email || (id === userId ? userObj.email : ''),
-            avatar: p?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${id}`,
-            color: p?.color || '#059669',
-          };
-        });
-
-        if (!members.some(m => m.id === userId)) {
-          members.unshift(userObj);
-        }
-
-        return {
-          id: g.id,
-          name: g.name,
-          description: g.description || '',
-          currency: g.currency || 'INR',
-          symbol: g.symbol || '₹',
-          createdAt: g.created_at ? g.created_at.split('T')[0] : '2026-10-31',
-          members,
-        };
-      });
-
-      setGroups(loadedGroups);
-      setActiveGroupId(loadedGroups[0]?.id || '');
-      setUsers(loadedGroups[0]?.members || [userObj]);
-
+      // Fetch ONLY this user's expenses (enforced by RLS user_id = auth.uid() AND explicit filter)
       const { data: dbExpenses, error: expError } = await supabase
         .from('expenses')
         .select('*')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (expError) throw expError;
@@ -308,43 +260,27 @@ export default function App() {
       } else {
         setExpenses([]);
       }
-
-      const { data: dbSettlements } = await supabase
-        .from('settlements')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (dbSettlements) {
-        setSettlements(
-          dbSettlements.map(s => ({
-            id: s.id,
-            groupId: s.group_id,
-            payerId: s.payer_id,
-            receiverId: s.receiver_id,
-            amount: Number(s.amount),
-            date: s.date,
-            method: s.method,
-            note: s.note || undefined,
-            createdAt: s.created_at,
-          }))
-        );
-      }
     } catch (err: any) {
-      console.error('Data load error:', err);
+      console.error('Error loading user expenses:', err);
       setExpenseFetchError(err.message || 'Failed to load expenses from Supabase.');
     } finally {
       setIsLoadingExpenses(false);
     }
   }, []);
 
+  // Session restoration & auth state listener
   useEffect(() => {
     let mounted = true;
 
     async function checkSession() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session && session.user && mounted) {
-          await loadUserData(session.user.id, session.user.email || '');
+        if (session?.user && mounted) {
+          await loadUserData(
+            session.user.id,
+            session.user.email || '',
+            session.user.user_metadata?.name
+          );
           setIsAuthenticated(true);
         }
       } catch (err) {
@@ -359,9 +295,14 @@ export default function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session?.user && mounted) {
-          await loadUserData(session.user.id, session.user.email || '');
+          await loadUserData(
+            session.user.id,
+            session.user.email || '',
+            session.user.user_metadata?.name
+          );
           setIsAuthenticated(true);
         } else if (event === 'SIGNED_OUT' && mounted) {
+          // Ends session in memory; never deletes database rows
           setIsAuthenticated(false);
           setExpenses([]);
           setSettlements([]);
@@ -379,12 +320,12 @@ export default function App() {
   const activeGroup: Group = useMemo(() => {
     return groups.find(g => g.id === activeGroupId) || groups[0] || {
       id: 'grp_default',
-      name: 'My Expenses 🏖️',
-      description: 'Personal expenses',
+      name: 'My Expenses',
+      description: 'Personal & Shared expenses',
       currency: 'INR',
       symbol: '₹',
       members: [currentUser],
-      createdAt: '2026-10-31',
+      createdAt: new Date().toISOString().split('T')[0],
     };
   }, [groups, activeGroupId, currentUser]);
 
@@ -401,28 +342,30 @@ export default function App() {
 
   const currentUserNet = netBalances[currentUser.id] || 0;
 
+  // Save Expense in Supabase associated with authenticated user's ID
   const handleSaveExpense = async (newExpData: Omit<Expense, 'id' | 'createdAt'>): Promise<boolean> => {
     const { data: { user } } = await supabase.auth.getUser();
-    const activeUserId = user?.id || currentUser.id;
-
-    if (!activeUserId) {
-      throw new Error('Please sign in to save an expense.');
+    if (!user) {
+      throw new Error('You must be signed in to save an expense.');
     }
 
-    const idempotentId = `exp_${Date.now()}`;
+    const newId = `exp_${Date.now()}`;
+    const expenseDate = newExpData.date || new Date().toISOString().split('T')[0];
 
     const dbPayload = {
-      id: idempotentId,
-      user_id: activeUserId,
+      id: newId,
+      user_id: user.id,
+      paid_by_id: user.id,
+      group_id: activeGroup.id,
+      title: newExpData.title.trim(),
       description: newExpData.title.trim(),
       amount: newExpData.amount,
       category: newExpData.category,
-      expense_date: newExpData.date || new Date().toISOString().split('T')[0],
-      title: newExpData.title.trim(),
-      paid_by_id: activeUserId,
-      group_id: activeGroup.id,
-      split_type: newExpData.splitType,
-      splits: newExpData.splits,
+      date: expenseDate,
+      expense_date: expenseDate,
+      split_type: newExpData.splitType || 'equal',
+      splits: newExpData.splits || [],
+      notes: newExpData.notes || null,
     };
 
     const { data: insertedRecord, error: insertError } = await supabase
@@ -432,31 +375,56 @@ export default function App() {
       .single();
 
     if (insertError) {
-      console.error('Supabase error inserting expense:', insertError);
-      throw new Error(insertError.message || 'Database rejected expense save.');
+      console.error('Supabase insert error:', insertError);
+      throw new Error(insertError.message || 'Failed to save expense to Supabase.');
     }
 
     const confirmedExpense = mapDbExpense(insertedRecord);
     setExpenses(prev => [confirmedExpense, ...prev.filter(e => e.id !== confirmedExpense.id)]);
-    showNotification(`Saved "${confirmedExpense.title}" permanently to Supabase.`);
+    showNotification(`Saved "${confirmedExpense.title}" to your account.`);
     return true;
   };
 
   const handleDeleteExpense = async (expenseId: string) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     const { error: deleteError } = await supabase
       .from('expenses')
       .delete()
-      .eq('id', expenseId);
+      .eq('id', expenseId)
+      .eq('user_id', user.id);
 
     if (deleteError) {
-      alert(`Could not delete: ${deleteError.message}`);
+      alert(`Could not delete expense: ${deleteError.message}`);
       return;
     }
 
     setExpenses(prev => prev.filter(e => e.id !== expenseId));
-    showNotification('Expense deleted from database.');
+    showNotification('Expense deleted.');
   };
 
+  const handleCreateGroup = (newGroup: Group) => {
+    setGroups(prev => [newGroup, ...prev]);
+    setActiveGroupId(newGroup.id);
+    setShowNewGroupModal(false);
+  };
+
+  const handleAddMemberToActiveGroup = (newMember: User) => {
+    if (!users.some(u => u.id === newMember.id)) {
+      setUsers(prev => [...prev, newMember]);
+    }
+    setGroups(prev =>
+      prev.map(grp =>
+        grp.id === activeGroup.id
+          ? { ...grp, members: [...grp.members, newMember] }
+          : grp
+      )
+    );
+    setShowInviteModal(false);
+  };
+
+  // Sign Out: Only ends session, never deletes saved accounts or expenses
   const handleSignOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -472,7 +440,7 @@ export default function App() {
       <div className="min-h-screen bg-[#060f14] text-white flex items-center justify-center p-6">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-          <p className="text-xs font-semibold text-slate-400">Verifying session...</p>
+          <p className="text-xs font-semibold text-slate-400">Restoring session...</p>
         </div>
       </div>
     );
@@ -481,10 +449,9 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <LoginPage3D
-        availableUsers={users}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
-          loadUserData(user.id, user.email);
+          loadUserData(user.id, user.email, user.name);
           setIsAuthenticated(true);
         }}
       />
@@ -508,9 +475,9 @@ export default function App() {
           setSelectedMemberFilter(null);
         }}
         onOpenNewGroup={() => setShowNewGroupModal(true)}
-        users={activeGroup.members || []}
+        users={[currentUser]}
         currentUser={currentUser}
-        onSelectUser={(u) => setCurrentUser(u)}
+        onSelectUser={() => {}}
         onOpenProfile={() => setShowProfileModal(true)}
         onOpenInvite={() => setShowInviteModal(true)}
         onSignOut={handleSignOut}
@@ -524,11 +491,11 @@ export default function App() {
               <span>{expenseFetchError}</span>
             </div>
             <button
-              onClick={() => loadUserData(currentUser.id, currentUser.email)}
+              onClick={() => loadUserData(currentUser.id, currentUser.email, currentUser.name)}
               className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold flex items-center gap-1 transition"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Sync</span>
+              <span>Retry</span>
             </button>
           </div>
         )}
@@ -550,7 +517,7 @@ export default function App() {
 
         <div className="pt-1">
           <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-            Account Owner (UID: {currentUser.id.slice(0, 12)}...):
+            Group Members:
           </div>
           <MemberPills
             group={activeGroup}
@@ -574,7 +541,7 @@ export default function App() {
               }`}
             >
               <Receipt className="w-4 h-4" />
-              <span>My Expenses ({currentGroupExpenses.length})</span>
+              <span>Expenses ({currentGroupExpenses.length})</span>
             </button>
 
             <button
@@ -603,13 +570,12 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab Views */}
         <div>
           {activeTab === 'expenses' && (
             isLoadingExpenses ? (
               <div className="bg-white rounded-3xl p-12 text-center border border-slate-200 text-slate-500 space-y-3">
                 <Loader2 className="w-7 h-7 animate-spin text-emerald-600 mx-auto" />
-                <p className="text-xs font-semibold text-slate-700">Loading your private expenses from Supabase...</p>
+                <p className="text-xs font-semibold text-slate-700">Loading your expenses from Supabase...</p>
               </div>
             ) : (
               <ExpenseList
@@ -649,7 +615,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* Modals */}
       {showAddModal && (
         <AddExpenseModal
           group={activeGroup}
@@ -689,7 +654,7 @@ export default function App() {
           availableUsers={users}
           currentUser={currentUser}
           onClose={() => setShowNewGroupModal(false)}
-          onCreateGroup={() => {}}
+          onCreateGroup={handleCreateGroup}
         />
       )}
 
@@ -697,7 +662,7 @@ export default function App() {
         <InviteMemberModal
           group={activeGroup}
           onClose={() => setShowInviteModal(false)}
-          onAddMember={() => {}}
+          onAddMember={handleAddMemberToActiveGroup}
         />
       )}
 
@@ -706,13 +671,13 @@ export default function App() {
           currentUser={currentUser}
           users={users}
           groups={groups}
-          onSelectUser={(u) => setCurrentUser(u)}
+          onSelectUser={() => {}}
           onUpdateCurrentUser={async (updated) => {
             setCurrentUser(prev => ({ ...prev, ...updated }));
             try {
               await supabase
                 .from('profiles')
-                .update({ username: updated.name, email: updated.email })
+                .update({ username: updated.name })
                 .eq('id', currentUser.id);
             } catch {}
           }}
@@ -720,7 +685,6 @@ export default function App() {
         />
       )}
 
-      {/* PWA Install Banner */}
       <PwaInstallBanner />
     </div>
   );
