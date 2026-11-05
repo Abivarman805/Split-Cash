@@ -30,14 +30,140 @@ import {
   Loader2,
   RefreshCw,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  Download,
+  Share,
+  X,
+  Sparkles
 } from 'lucide-react';
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+// ============================================================================
+// INLINE PWA INSTALL BANNER COMPONENT
+// ============================================================================
+function PwaInstallBanner() {
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isIos, setIsIos] = useState(false);
+  const [showIosTip, setShowIosTip] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
+
+  useEffect(() => {
+    const checkStandalone = 
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true;
+
+    setIsStandalone(checkStandalone);
+
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
+    setIsIos(isIosDevice);
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  if (isStandalone || isDismissed) return null;
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const choice = await deferredPrompt.userChoice;
+    if (choice.outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
+
+  return (
+    <>
+      {deferredPrompt && (
+        <div className="fixed bottom-5 right-5 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="flex items-center gap-2 p-1.5 pl-3.5 bg-slate-900/95 text-white border border-emerald-500/40 rounded-2xl shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              <span>Install SplitMate</span>
+            </div>
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-extrabold rounded-xl shadow-md shadow-emerald-600/30 transition min-h-[38px]"
+            >
+              <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Install</span>
+            </button>
+            <button
+              onClick={() => setIsDismissed(true)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition"
+              aria-label="Dismiss install prompt"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isIos && !deferredPrompt && (
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-sm z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          {!showIosTip ? (
+            <button
+              onClick={() => setShowIosTip(true)}
+              className="w-full flex items-center justify-between gap-3 p-3 bg-slate-900/95 text-white border border-emerald-500/40 rounded-2xl shadow-2xl backdrop-blur-md text-xs font-bold"
+            >
+              <div className="flex items-center gap-2">
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>Install on iPhone</span>
+              </div>
+              <span className="text-[11px] text-emerald-400 font-extrabold">Tap to see how →</span>
+            </button>
+          ) : (
+            <div className="p-4 bg-slate-900/95 text-white border border-emerald-500/40 rounded-2xl shadow-2xl backdrop-blur-md space-y-2 text-xs">
+              <div className="flex items-center justify-between font-bold text-slate-200">
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <Share className="w-3.5 h-3.5" />
+                  <span>Install on iOS Safari:</span>
+                </span>
+                <button onClick={() => setShowIosTip(false)} className="text-slate-400 hover:text-white">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-slate-300 leading-relaxed text-[11px]">
+                1. Tap the <strong>Share</strong> button in Safari's toolbar.<br />
+                2. Scroll down and tap <strong>"Add to Home Screen"</strong>.<br />
+                3. Open SplitMate from your home screen for full-screen mode!
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ============================================================================
+// MAIN APP COMPONENT
+// ============================================================================
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
-  // Entities State: ZERO dummy expenses for authenticated accounts
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string>('');
   const [users, setUsers] = useState<User[]>([]);
@@ -48,7 +174,6 @@ export default function App() {
     avatar: '',
   });
 
-  // Source of truth: Supabase database only
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [isLoadingExpenses, setIsLoadingExpenses] = useState<boolean>(false);
@@ -75,7 +200,6 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Map database row to frontend Expense
   const mapDbExpense = (row: any): Expense => ({
     id: row.id,
     groupId: row.group_id || 'grp_personal',
@@ -91,13 +215,11 @@ export default function App() {
     createdAt: row.created_at,
   });
 
-  // 1. Authoritative Database Fetch: Executes strictly after authenticated user is known
   const loadUserData = useCallback(async (userId: string, email: string) => {
     setIsLoadingExpenses(true);
     setExpenseFetchError(null);
 
     try {
-      // Fetch public profile
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
@@ -113,7 +235,6 @@ export default function App() {
       };
       setCurrentUser(userObj);
 
-      // Groups setup
       let { data: dbGroups } = await supabase.from('groups').select('*');
 
       if (!dbGroups || dbGroups.length === 0) {
@@ -175,7 +296,6 @@ export default function App() {
       setActiveGroupId(loadedGroups[0]?.id || '');
       setUsers(loadedGroups[0]?.members || [userObj]);
 
-      // FETCH USER'S PRIVATE EXPENSES (Protected by RLS: user_id = auth.uid())
       const { data: dbExpenses, error: expError } = await supabase
         .from('expenses')
         .select('*')
@@ -188,6 +308,27 @@ export default function App() {
       } else {
         setExpenses([]);
       }
+
+      const { data: dbSettlements } = await supabase
+        .from('settlements')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (dbSettlements) {
+        setSettlements(
+          dbSettlements.map(s => ({
+            id: s.id,
+            groupId: s.group_id,
+            payerId: s.payer_id,
+            receiverId: s.receiver_id,
+            amount: Number(s.amount),
+            date: s.date,
+            method: s.method,
+            note: s.note || undefined,
+            createdAt: s.created_at,
+          }))
+        );
+      }
     } catch (err: any) {
       console.error('Data load error:', err);
       setExpenseFetchError(err.message || 'Failed to load expenses from Supabase.');
@@ -196,7 +337,6 @@ export default function App() {
     }
   }, []);
 
-  // 2. Session Initialization & Listener
   useEffect(() => {
     let mounted = true;
 
@@ -222,7 +362,6 @@ export default function App() {
           await loadUserData(session.user.id, session.user.email || '');
           setIsAuthenticated(true);
         } else if (event === 'SIGNED_OUT' && mounted) {
-          // Session end: ONLY resets local memory, NEVER issues a database DELETE request
           setIsAuthenticated(false);
           setExpenses([]);
           setSettlements([]);
@@ -237,7 +376,6 @@ export default function App() {
     };
   }, [loadUserData]);
 
-  // Active Group
   const activeGroup: Group = useMemo(() => {
     return groups.find(g => g.id === activeGroupId) || groups[0] || {
       id: 'grp_default',
@@ -263,7 +401,6 @@ export default function App() {
 
   const currentUserNet = netBalances[currentUser.id] || 0;
 
-  // 3. Save Expense: Shows success and updates UI ONLY after database confirms
   const handleSaveExpense = async (newExpData: Omit<Expense, 'id' | 'createdAt'>): Promise<boolean> => {
     const { data: { user } } = await supabase.auth.getUser();
     const activeUserId = user?.id || currentUser.id;
@@ -274,14 +411,13 @@ export default function App() {
 
     const idempotentId = `exp_${Date.now()}`;
 
-    // Database record matching Master Plan
     const dbPayload = {
       id: idempotentId,
-      user_id: activeUserId,                            // Linked to authenticated user ID
-      description: newExpData.title.trim(),             // Description of expense
-      amount: newExpData.amount,                         // Amount
-      category: newExpData.category,                     // Category
-      expense_date: newExpData.date || new Date().toISOString().split('T')[0], // Date
+      user_id: activeUserId,
+      description: newExpData.title.trim(),
+      amount: newExpData.amount,
+      category: newExpData.category,
+      expense_date: newExpData.date || new Date().toISOString().split('T')[0],
       title: newExpData.title.trim(),
       paid_by_id: activeUserId,
       group_id: activeGroup.id,
@@ -289,7 +425,6 @@ export default function App() {
       splits: newExpData.splits,
     };
 
-    // Await database confirmation
     const { data: insertedRecord, error: insertError } = await supabase
       .from('expenses')
       .insert(dbPayload)
@@ -301,14 +436,12 @@ export default function App() {
       throw new Error(insertError.message || 'Database rejected expense save.');
     }
 
-    // Success confirmed by Supabase: update UI
     const confirmedExpense = mapDbExpense(insertedRecord);
     setExpenses(prev => [confirmedExpense, ...prev.filter(e => e.id !== confirmedExpense.id)]);
     showNotification(`Saved "${confirmedExpense.title}" permanently to Supabase.`);
     return true;
   };
 
-  // Delete Expense
   const handleDeleteExpense = async (expenseId: string) => {
     const { error: deleteError } = await supabase
       .from('expenses')
@@ -324,7 +457,6 @@ export default function App() {
     showNotification('Expense deleted from database.');
   };
 
-  // Sign out: Terminates session without touching any database rows
   const handleSignOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -471,7 +603,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab View */}
+        {/* Tab Views */}
         <div>
           {activeTab === 'expenses' && (
             isLoadingExpenses ? (
@@ -587,6 +719,9 @@ export default function App() {
           onClose={() => setShowProfileModal(false)}
         />
       )}
+
+      {/* PWA Install Banner */}
+      <PwaInstallBanner />
     </div>
   );
 }
